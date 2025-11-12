@@ -1,0 +1,13 @@
+rebuild: docker build -t mario-ppo .
+
+run docker: docker run --gpus all -it --rm -v "${PWD}:/Super-mario-bros-PPO-pytorch" mario-ppo
+
+train: Inside: python train.py --world 1 --stage 1 --lr 1e-4
+test: python test.py --world 1 --stage 1
+
+
+python -c "import gym, numpy; print('gym', gym.__version__)"
+
+
+pip install "gym==0.20.0" "nes-py==8.1.8" "gym-super-mario-bros==7.3.0" 
+"numpy<1.24" "pyglet==1.5.7" "opencv-python==4.3.0.36" "future==0.18.2"

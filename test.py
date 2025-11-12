@@ -10,6 +10,7 @@ from src.env import create_train_env
 from src.model import PPO
 from gym_super_mario_bros.actions import SIMPLE_MOVEMENT, COMPLEX_MOVEMENT, RIGHT_ONLY
 import torch.nn.functional as F
+import time
 
 
 def get_args():
@@ -20,6 +21,7 @@ def get_args():
     parser.add_argument("--action_type", type=str, default="simple")
     parser.add_argument("--saved_path", type=str, default="trained_models")
     parser.add_argument("--output_path", type=str, default="output")
+    parser.add_argument("--max_seconds", type=float, default=10, help="Stop test after this many seconds")
     args = parser.parse_args()
     return args
 
@@ -46,6 +48,7 @@ def test(opt):
                                          map_location=lambda storage, loc: storage))
     model.eval()
     state = torch.from_numpy(env.reset())
+    start = time.time()
     while True:
         if torch.cuda.is_available():
             state = state.cuda()
@@ -54,9 +57,12 @@ def test(opt):
         action = torch.argmax(policy).item()
         state, reward, done, info = env.step(action)
         state = torch.from_numpy(state)
-        env.render()
+        # env.render()
         if info["flag_get"]:
             print("World {} stage {} completed".format(opt.world, opt.stage))
+            break
+        if time.time() - start > opt.max_seconds:
+            print("Max time reached. Stopping test.")
             break
 
 

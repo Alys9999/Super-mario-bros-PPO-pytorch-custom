@@ -3,6 +3,7 @@
 """
 
 import os
+import torch; torch.backends.cudnn.benchmark = True
 
 os.environ['OMP_NUM_THREADS'] = '1'
 import argparse
@@ -37,6 +38,7 @@ def get_args():
     parser.add_argument("--max_actions", type=int, default=200, help="Maximum repetition steps in test phase")
     parser.add_argument("--log_path", type=str, default="tensorboard/ppo_super_mario_bros")
     parser.add_argument("--saved_path", type=str, default="trained_models")
+    parser.add_argument("--max_updates", type=int, default=None, help="Stop after this many PPO updates (episodes)")
     args = parser.parse_args()
     return args
 
@@ -54,11 +56,13 @@ def train(opt):
     mp = _mp.get_context("spawn")
     envs = MultipleEnvironments(opt.world, opt.stage, opt.action_type, opt.num_processes)
     model = PPO(envs.num_states, envs.num_actions)
-    if torch.cuda.is_available():
-        model.cuda()
+
     model.share_memory()
     process = mp.Process(target=eval, args=(opt, model, envs.num_states, envs.num_actions))
     process.start()
+
+    if torch.cuda.is_available():
+        model.cuda()
     optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr)
     [agent_conn.send(("reset", None)) for agent_conn in envs.agent_conns]
     curr_states = [agent_conn.recv() for agent_conn in envs.agent_conns]
@@ -67,11 +71,11 @@ def train(opt):
         curr_states = curr_states.cuda()
     curr_episode = 0
     while True:
-        # if curr_episode % opt.save_interval == 0 and curr_episode > 0:
-        #     torch.save(model.state_dict(),
-        #                "{}/ppo_super_mario_bros_{}_{}".format(opt.saved_path, opt.world, opt.stage))
-        #     torch.save(model.state_dict(),
-        #                "{}/ppo_super_mario_bros_{}_{}_{}".format(opt.saved_path, opt.world, opt.stage, curr_episode))
+        if curr_episode % opt.save_interval == 0 and curr_episode > 0:
+            torch.save(model.state_dict(),
+                       "{}/ppo_super_mario_bros_{}_{}".format(opt.saved_path, opt.world, opt.stage))
+            torch.save(model.state_dict(),
+                       "{}/ppo_super_mario_bros_{}_{}_{}".format(opt.saved_path, opt.world, opt.stage, curr_episode))
         curr_episode += 1
         old_log_policies = []
         actions = []
@@ -106,6 +110,7 @@ def train(opt):
             rewards.append(reward)
             dones.append(done)
             curr_states = state
+            rollout_mean_reward = torch.stack(rewards).mean().item()
 
         _, next_value, = model(curr_states)
         next_value = next_value.squeeze()
@@ -146,7 +151,16 @@ def train(opt):
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
                 optimizer.step()
-        print("Episode: {}. Total loss: {}".format(curr_episode, total_loss))
+        print("Episode: {}. Total loss: {:.4f}. Mean reward: {:.3f}".format(curr_episode, total_loss.item(), rollout_mean_reward))
+        if opt.max_updates is not None and curr_episode >= opt.max_updates:
+            print(f"Reached max_updates={opt.max_updates}. Stopping training.")
+            break
+    try:
+        process.terminate()
+        process.join(timeout=5)
+        if process.is_alive(): process.terminate()
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

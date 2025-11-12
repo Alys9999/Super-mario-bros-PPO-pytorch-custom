@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 import subprocess as sp
 import torch.multiprocessing as mp
+from tqdm import tqdm
 
 
 class Monitor:
@@ -25,6 +26,14 @@ class Monitor:
 
     def record(self, image_array):
         self.pipe.stdin.write(image_array.tostring())
+        # Non-blocking write + progress
+        if not hasattr(self, "_pbar"):
+            try:
+                self._pbar = tqdm(total=None, desc="Recording", unit="frame", dynamic_ncols=True, mininterval=0.5)
+            except Exception:
+                self._pbar = None
+        if getattr(self, "_pbar", None) is not None:
+            self._pbar.update(1)
 
 
 def process_frame(frame):
