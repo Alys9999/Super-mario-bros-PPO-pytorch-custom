@@ -42,11 +42,12 @@ def get_args():
     parser.add_argument("--saved_path", type=str, default="trained_models")
     parser.add_argument("--max_updates", type=int, default=101, help="Stop after this many PPO updates (episodes)")
 
+    parser.add_argument("--resume_from", type=str, default="trained_models/ppo_super_mario_bros_1_1", help="Path to checkpoint .pt to resume from")
 
         # Time proximity shaping
     parser.add_argument('--time_bonus_weight', type=float, default=1.0,
                         help='Weight for the time proximity Gaussian bonus')
-    parser.add_argument('--time_center', type=float, default=290.0,
+    parser.add_argument('--time_center', type=float, default=350.0,
                         help='Target time for Gaussian bonus (seconds)')
     parser.add_argument('--time_sigma', type=float, default=30.0,
                         help='Std for Gaussian in seconds')
@@ -84,6 +85,19 @@ def train(opt):
     envs = MultipleEnvironments(opt.world, opt.stage, "Actions.json", opt.num_processes)
     model = PPO(envs.num_states, envs.num_actions)
 
+    curr_episode = 0
+    if opt.resume_from:
+        print("Loading model from " + str(opt.resume_from))
+        ckpt = torch.load(opt.resume_from, map_location="cpu")
+        # handle plain state_dict or dict checkpoint
+        if isinstance(ckpt, dict) and "model" in ckpt:
+            print("There is a checkpoint dict, loading model and state")
+            model.load_state_dict(ckpt["model"])
+            curr_episode = int(ckpt.get("episode", 0))
+        else:
+            print("Loading checkpoint state_dict only")
+            model.load_state_dict(ckpt)
+
     model.share_memory()
     process = mp.Process(target=eval, args=(opt, model, envs.num_states, envs.num_actions))
     process.start()
@@ -114,7 +128,7 @@ def train(opt):
     fps = 60.0
 
 
-    curr_episode = 0
+    
     while True:
         if curr_episode % opt.save_interval == 0 and curr_episode > 0:
             torch.save(model.state_dict(),

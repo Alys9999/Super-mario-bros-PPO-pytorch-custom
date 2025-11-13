@@ -12,6 +12,8 @@ from src.model import PPO
 from gym_super_mario_bros.actions import SIMPLE_MOVEMENT, COMPLEX_MOVEMENT, RIGHT_ONLY
 import torch.nn.functional as F
 import time
+from datetime import datetime
+
 
 
 def get_args():
@@ -21,9 +23,13 @@ def get_args():
     parser.add_argument("--stage", type=int, default=1)
     parser.add_argument("--action_type", type=str, default="simple")
     parser.add_argument("--saved_path", type=str, default="trained_models")
-    parser.add_argument("--output_path", type=str, default="output")
+    parser.add_argument("--output_path", type=str, default="None", help="Defaults to output/YYYY-MM-DD")
     parser.add_argument("--max_seconds", type=float, default=10, help="Stop test after this many seconds")
     args = parser.parse_args()
+
+    if not args.output_path or args.output_path == "None":
+        args.output_path = os.path.join("output", datetime.now().strftime("%Y-%m-%d"))
+
     return args
 
 
@@ -40,8 +46,12 @@ def test(opt):
     #     actions = SIMPLE_MOVEMENT
     # else:
     #     actions = COMPLEX_MOVEMENT
-    env = create_train_env(opt.world, opt.stage, actions,
-                           "{}/video_{}_{}.mp4".format(opt.output_path, opt.world, opt.stage))
+    os.makedirs(opt.output_path, exist_ok=True)
+    ts = datetime.now().strftime("%H%M%S")
+    video_path = os.path.join(opt.output_path, f"video_{opt.world}_{opt.stage}_{ts}.mp4")
+    # env = create_train_env(opt.world, opt.stage, actions,
+    #                        "{}/video_{}_{}.mp4".format(opt.output_path, opt.world, opt.stage))
+    env = create_train_env(opt.world, opt.stage, actions, video_path)
     model = PPO(env.observation_space.shape[0], len(actions))
     if torch.cuda.is_available():
         model.load_state_dict(torch.load("{}/ppo_super_mario_bros_{}_{}".format(opt.saved_path, opt.world, opt.stage)))
