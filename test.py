@@ -1,6 +1,7 @@
 """
 @author: Viet Nguyen <nhviet1009@gmail.com>
 """
+import json
 import os
 
 os.environ['OMP_NUM_THREADS'] = '1'
@@ -31,12 +32,14 @@ def test(opt):
         torch.cuda.manual_seed(123)
     else:
         torch.manual_seed(123)
-    if opt.action_type == "right":
-        actions = RIGHT_ONLY
-    elif opt.action_type == "simple":
-        actions = SIMPLE_MOVEMENT
-    else:
-        actions = COMPLEX_MOVEMENT
+    with open("Actions.json", "r") as f:
+        actions = json.load(f)["actions"]
+    # if opt.action_type == "right":
+    #     actions = RIGHT_ONLY
+    # elif opt.action_type == "simple":
+    #     actions = SIMPLE_MOVEMENT
+    # else:
+    #     actions = COMPLEX_MOVEMENT
     env = create_train_env(opt.world, opt.stage, actions,
                            "{}/video_{}_{}.mp4".format(opt.output_path, opt.world, opt.stage))
     model = PPO(env.observation_space.shape[0], len(actions))

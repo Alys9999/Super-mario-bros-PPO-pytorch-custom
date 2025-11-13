@@ -16,6 +16,8 @@ from torch.distributions import Categorical
 import torch.nn.functional as F
 import numpy as np
 import shutil
+import math
+
 
 
 def get_args():
@@ -38,7 +40,32 @@ def get_args():
     parser.add_argument("--max_actions", type=int, default=200, help="Maximum repetition steps in test phase")
     parser.add_argument("--log_path", type=str, default="tensorboard/ppo_super_mario_bros")
     parser.add_argument("--saved_path", type=str, default="trained_models")
-    parser.add_argument("--max_updates", type=int, default=None, help="Stop after this many PPO updates (episodes)")
+    parser.add_argument("--max_updates", type=int, default=101, help="Stop after this many PPO updates (episodes)")
+
+
+        # Time proximity shaping
+    parser.add_argument('--time_bonus_weight', type=float, default=1.0,
+                        help='Weight for the time proximity Gaussian bonus')
+    parser.add_argument('--time_center', type=float, default=290.0,
+                        help='Target time for Gaussian bonus (seconds)')
+    parser.add_argument('--time_sigma', type=float, default=30.0,
+                        help='Std for Gaussian in seconds')
+    parser.add_argument('--time_source', type=str, choices=['env_remaining', 'elapsed_steps'],
+                        default='env_remaining', help='Use env info["time"] or approximate elapsed')
+
+    # Action diversity shaping
+    parser.add_argument('--novelty_weight', type=float, default=0.9,
+                        help='Per-action novelty reward weight')
+    parser.add_argument('--novelty_mode', type=str, choices=['geometric', 'harmonic'], default='geometric',
+                        help='Novelty decay: geometric (alpha**c) or harmonic (1/(1+c))')
+    parser.add_argument('--novelty_alpha', type=float, default=0.97,
+                        help='Alpha for geometric novelty decay, 0<alpha<1')
+    parser.add_argument('--novelty_cap', type=int, default=20,
+                        help='If >0, stop novelty after M uses per action per episode')
+    parser.add_argument('--coverage_bonus', type=float, default=2.0,
+                        help='One-time bonus when all actions are used in an episode')
+
+
     args = parser.parse_args()
     return args
 
@@ -54,7 +81,7 @@ def train(opt):
     if not os.path.isdir(opt.saved_path):
         os.makedirs(opt.saved_path)
     mp = _mp.get_context("spawn")
-    envs = MultipleEnvironments(opt.world, opt.stage, opt.action_type, opt.num_processes)
+    envs = MultipleEnvironments(opt.world, opt.stage, "Actions.json", opt.num_processes)
     model = PPO(envs.num_states, envs.num_actions)
 
     model.share_memory()
@@ -63,12 +90,30 @@ def train(opt):
 
     if torch.cuda.is_available():
         model.cuda()
+
+
+
     optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr)
     [agent_conn.send(("reset", None)) for agent_conn in envs.agent_conns]
     curr_states = [agent_conn.recv() for agent_conn in envs.agent_conns]
     curr_states = torch.from_numpy(np.concatenate(curr_states, 0))
+
+
     if torch.cuda.is_available():
         curr_states = curr_states.cuda()
+
+
+    # Episode-local action diversity tracking (per env process)
+    ep_action_counts = torch.zeros(opt.num_processes, envs.num_actions, dtype=torch.long)
+    ep_action_seen = torch.zeros(opt.num_processes, envs.num_actions, dtype=torch.bool)
+    ep_coverage_paid = torch.zeros(opt.num_processes, dtype=torch.bool)
+    ep_step_counts = torch.zeros(opt.num_processes, dtype=torch.long)  # used if time_source=elapsed_steps
+    # constants for elapsed time approximation (skip=4, ~60 fps)
+    ep_time_potential = torch.zeros(opt.num_processes, dtype=torch.float32)
+    frameskip = 4
+    fps = 60.0
+
+
     curr_episode = 0
     while True:
         if curr_episode % opt.save_interval == 0 and curr_episode > 0:
@@ -99,6 +144,7 @@ def train(opt):
                 [agent_conn.send(("step", act)) for agent_conn, act in zip(envs.agent_conns, action)]
 
             state, reward, done, info = zip(*[agent_conn.recv() for agent_conn in envs.agent_conns])
+            done_flags = [bool(d) for d in done]
             state = torch.from_numpy(np.concatenate(state, 0))
             if torch.cuda.is_available():
                 state = state.cuda()
@@ -107,10 +153,106 @@ def train(opt):
             else:
                 reward = torch.FloatTensor(reward)
                 done = torch.FloatTensor(done)
+            
+
+
+
+
+            # Episode time step count (for elapsed time option)
+            ep_step_counts += 1
+
+            # Compute per-env novelty + coverage + (optional) time bonus
+            act_ids = action.detach().cpu().tolist()
+
+            novelty_terms = []
+            coverage_terms = []
+            time_terms = []
+            for idx, a in enumerate(act_ids):
+                # Novelty bonus
+                c = int(ep_action_counts[idx, a].item())
+                if opt.novelty_cap > 0 and c >= opt.novelty_cap:
+                    nov = 0.0
+                else:
+                    if opt.novelty_mode == 'geometric':
+                        nov = opt.novelty_weight * (opt.novelty_alpha ** c)
+                    else:
+                        nov = opt.novelty_weight / (1.0 + c)
+                novelty_terms.append(float(nov))
+
+                # Mark usage and maybe coverage bonus
+                ep_action_counts[idx, a] += 1
+                ep_action_seen[idx, a] = True
+                if (not ep_coverage_paid[idx]) and bool(ep_action_seen[idx].all().item()):
+                    coverage_terms.append(float(opt.coverage_bonus))
+                    ep_coverage_paid[idx] = True
+                else:
+                    coverage_terms.append(0.0)
+
+                # Time proximity bonus as stepwise potential difference (instant reward)
+                if opt.time_source == 'env_remaining':
+                    t_val = info[idx].get('time', None)
+                    if t_val is not None and opt.time_sigma > 0:
+                        z = (float(t_val) - opt.time_center) / opt.time_sigma
+                        phi_now = opt.time_bonus_weight * math.exp(-0.5 * (z * z))
+                    else:
+                        phi_now = 0.0
+                else:
+                    # approximate elapsed seconds: steps * frameskip / fps
+                    t_elapsed = float(ep_step_counts[idx].item()) * (frameskip / fps)
+                    if opt.time_sigma > 0:
+                        z = (t_elapsed - opt.time_center) / opt.time_sigma
+                        phi_now = opt.time_bonus_weight * math.exp(-0.5 * (z * z))
+                    else:
+                        phi_now = 0.0
+
+                t_bonus = float(phi_now - ep_time_potential[idx].item())
+                ep_time_potential[idx] = phi_now
+                time_terms.append(t_bonus)
+
+
+            # Add the extras to the reward tensor (device-aware)
+            extras = torch.tensor(
+                [n + c + t for n, c, t in zip(novelty_terms, coverage_terms, time_terms)],
+                device=reward.device, dtype=reward.dtype
+            )
+            reward = reward + extras
+
+            # Reset per-episode trackers for envs that just ended
+            for idx, d in enumerate(done_flags):
+                if d:
+                    ep_action_counts[idx].zero_()
+                    ep_action_seen[idx].zero_()
+                    ep_coverage_paid[idx] = False
+                    ep_step_counts[idx] = 0
+                    ep_time_potential[idx] = 0.0
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
             rewards.append(reward)
             dones.append(done)
             curr_states = state
             rollout_mean_reward = torch.stack(rewards).mean().item()
+            sum_rewards = torch.stack(rewards).sum(dim=0)
 
         _, next_value, = model(curr_states)
         next_value = next_value.squeeze()
@@ -151,16 +293,18 @@ def train(opt):
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
                 optimizer.step()
-        print("Episode: {}. Total loss: {:.4f}. Mean reward: {:.3f}".format(curr_episode, total_loss.item(), rollout_mean_reward))
+        print("Episode: {}. Total loss: {:.4f}. Mean reward: {:.3f}, Sum rewards: {:3f}".format(curr_episode, total_loss.item(), rollout_mean_reward, sum_rewards.mean().item()))
         if opt.max_updates is not None and curr_episode >= opt.max_updates:
             print(f"Reached max_updates={opt.max_updates}. Stopping training.")
             break
-    try:
-        process.terminate()
-        process.join(timeout=5)
-        if process.is_alive(): process.terminate()
-    except Exception:
-        pass
+    print("closing envs")
+    envs.close()
+    print("closing train process")
+    process.join(timeout=5)
+    if process.is_alive(): process.terminate()
+
+    exit()
+
 
 
 if __name__ == "__main__":

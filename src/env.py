@@ -12,6 +12,7 @@ import numpy as np
 import subprocess as sp
 import torch.multiprocessing as mp
 from tqdm import tqdm
+import json
 
 
 class Monitor:
@@ -59,35 +60,16 @@ class CustomReward(Wrapper):
             self.monitor = None
 
     def step(self, action):
-        state, reward, done, info = self.env.step(action)
+        state, _, done, info = self.env.step(action)
         if self.monitor:
             self.monitor.record(state)
         state = process_frame(state)
-        reward += (info["score"] - self.curr_score) / 40.
-        self.curr_score = info["score"]
-        if done:
-            if info["flag_get"]:
-                reward += 50
-            else:
-                reward -= 50
-        if self.world == 7 and self.stage == 4:
-            if (506 <= info["x_pos"] <= 832 and info["y_pos"] > 127) or (
-                    832 < info["x_pos"] <= 1064 and info["y_pos"] < 80) or (
-                    1113 < info["x_pos"] <= 1464 and info["y_pos"] < 191) or (
-                    1579 < info["x_pos"] <= 1943 and info["y_pos"] < 191) or (
-                    1946 < info["x_pos"] <= 1964 and info["y_pos"] >= 191) or (
-                    1984 < info["x_pos"] <= 2060 and (info["y_pos"] >= 191 or info["y_pos"] < 127)) or (
-                    2114 < info["x_pos"] < 2440 and info["y_pos"] < 191) or info["x_pos"] < self.current_x - 500:
-                reward -= 50
-                done = True
-        if self.world == 4 and self.stage == 4:
-            if (info["x_pos"] <= 1500 and info["y_pos"] < 127) or (
-                    1588 <= info["x_pos"] < 2380 and info["y_pos"] >= 127):
-                reward = -50
-                done = True
+        score_now = float(info.get("score", 0))
+        reward = (score_now - self.curr_score) / 40.0
+        self.curr_score = score_now
 
         self.current_x = info["x_pos"]
-        return state, reward / 10., done, info
+        return state, reward, done, info
 
     def reset(self):
         self.curr_score = 0
@@ -136,22 +118,26 @@ def create_train_env(world, stage, actions, output_path=None):
     env = CustomSkipFrame(env)
     return env
 
-
+# kept the actinon_type argument for backward compatibility
 class MultipleEnvironments:
-    def __init__(self, world, stage, action_type, num_envs, output_path=None):
+    def __init__(self, world, stage, action_type, num_envs, output_path=None, actions_json="Actions.json"):
         self.agent_conns, self.env_conns = zip(*[mp.Pipe() for _ in range(num_envs)])
-        if action_type == "right":
-            actions = RIGHT_ONLY
-        elif action_type == "simple":
-            actions = SIMPLE_MOVEMENT
-        else:
-            actions = COMPLEX_MOVEMENT
+        self.processes = []
+        # if action_type == "right":
+        #     actions = RIGHT_ONLY
+        # elif action_type == "simple":
+        #     actions = SIMPLE_MOVEMENT
+        # else:
+        #     actions = COMPLEX_MOVEMENT
+        with open(actions_json, "r") as f:
+            actions = json.load(f)["actions"]
         self.envs = [create_train_env(world, stage, actions, output_path=output_path) for _ in range(num_envs)]
         self.num_states = self.envs[0].observation_space.shape[0]
         self.num_actions = len(actions)
         for index in range(num_envs):
             process = mp.Process(target=self.run, args=(index,))
             process.start()
+            self.processes.append(process)
             self.env_conns[index].close()
 
     def run(self, index):
@@ -162,5 +148,21 @@ class MultipleEnvironments:
                 self.env_conns[index].send(self.envs[index].step(action.item()))
             elif request == "reset":
                 self.env_conns[index].send(self.envs[index].reset())
+            elif request == "close":
+                self.env_conns[index].close()
+                break
             else:
                 raise NotImplementedError
+    
+    def close(self):
+        for c in self.agent_conns:
+            print("closing agent con: " + str(c))
+            c.send(("close", None))
+            c.close()
+        for p in self.processes:
+            print("closing process: " + str(p))
+            p.join(timeout = 5)
+            if p.is_alive():
+                p.terminate()
+    
+

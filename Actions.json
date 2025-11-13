@@ -1,0 +1,17 @@
+{
+  "name": "CUSTOM_SUPER_MARIO_ACTIONS",
+  "buttons": ["NOOP","A","B","left","right","up","down","start"],
+  "actions": [
+    ["NOOP"],
+    ["right"],
+    ["right","A"],
+    ["right","B"],
+    ["right","A","B"],
+    ["A"],
+    ["left"],
+    ["left","A"],
+    ["down"],
+    ["up"],
+    ["down","A"]
+  ]
+}

@@ -2,6 +2,7 @@
 @author: Viet Nguyen <nhviet1009@gmail.com>
 """
 
+import json
 import torch
 from src.env import create_train_env
 from src.model import PPO
@@ -12,12 +13,14 @@ from gym_super_mario_bros.actions import SIMPLE_MOVEMENT, COMPLEX_MOVEMENT, RIGH
 
 def eval(opt, global_model, num_states, num_actions):
     torch.manual_seed(123)
-    if opt.action_type == "right":
-        actions = RIGHT_ONLY
-    elif opt.action_type == "simple":
-        actions = SIMPLE_MOVEMENT
-    else:
-        actions = COMPLEX_MOVEMENT
+    # if opt.action_type == "right":
+    #     actions = RIGHT_ONLY
+    # elif opt.action_type == "simple":
+    #     actions = SIMPLE_MOVEMENT
+    # else:
+    #     actions = COMPLEX_MOVEMENT
+    with open("Actions.json", "r") as f:
+        actions = json.load(f)["actions"]
     env = create_train_env(opt.world, opt.stage, actions)
     local_model = PPO(num_states, num_actions)
     if torch.cuda.is_available():
