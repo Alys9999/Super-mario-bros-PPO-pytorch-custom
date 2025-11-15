@@ -29,7 +29,7 @@ def get_args():
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--gamma', type=float, default=0.9, help='discount factor for rewards')
     parser.add_argument('--tau', type=float, default=1.0, help='parameter for GAE')
-    parser.add_argument('--beta', type=float, default=0.01, help='entropy coefficient')
+    parser.add_argument('--beta', type=float, default=0.0001, help='entropy coefficient')
     parser.add_argument('--epsilon', type=float, default=0.2, help='parameter for Clipped Surrogate Objective')
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--num_epochs', type=int, default=10)
@@ -43,27 +43,27 @@ def get_args():
     parser.add_argument("--max_updates", type=int, default=101, help="Stop after this many PPO updates (episodes)")
 
     parser.add_argument("--resume_from", type=str, default="trained_models/ppo_super_mario_bros_1_1", help="Path to checkpoint .pt to resume from")
-
+    # trained_models/ppo_super_mario_bros_1_1
         # Time proximity shaping
     parser.add_argument('--time_bonus_weight', type=float, default=1.0,
                         help='Weight for the time proximity Gaussian bonus')
-    parser.add_argument('--time_center', type=float, default=350.0,
+    parser.add_argument('--time_center', type=float, default=390.0,
                         help='Target time for Gaussian bonus (seconds)')
-    parser.add_argument('--time_sigma', type=float, default=30.0,
+    parser.add_argument('--time_sigma', type=float, default=10.0,
                         help='Std for Gaussian in seconds')
     parser.add_argument('--time_source', type=str, choices=['env_remaining', 'elapsed_steps'],
                         default='env_remaining', help='Use env info["time"] or approximate elapsed')
 
     # Action diversity shaping
-    parser.add_argument('--novelty_weight', type=float, default=0.9,
+    parser.add_argument('--novelty_weight', type=float, default=0.3,
                         help='Per-action novelty reward weight')
     parser.add_argument('--novelty_mode', type=str, choices=['geometric', 'harmonic'], default='geometric',
                         help='Novelty decay: geometric (alpha**c) or harmonic (1/(1+c))')
-    parser.add_argument('--novelty_alpha', type=float, default=0.97,
+    parser.add_argument('--novelty_alpha', type=float, default=0.95,
                         help='Alpha for geometric novelty decay, 0<alpha<1')
-    parser.add_argument('--novelty_cap', type=int, default=20,
+    parser.add_argument('--novelty_cap', type=int, default=3,
                         help='If >0, stop novelty after M uses per action per episode')
-    parser.add_argument('--coverage_bonus', type=float, default=2.0,
+    parser.add_argument('--coverage_bonus', type=float, default=1.0,
                         help='One-time bonus when all actions are used in an episode')
 
 
@@ -72,6 +72,9 @@ def get_args():
 
 
 def train(opt):
+    noop_penalty = 0.01
+
+
     if torch.cuda.is_available():
         torch.cuda.manual_seed(123)
     else:
@@ -86,7 +89,7 @@ def train(opt):
     model = PPO(envs.num_states, envs.num_actions)
 
     curr_episode = 0
-    if opt.resume_from:
+    if opt.resume_from != "None":
         print("Loading model from " + str(opt.resume_from))
         ckpt = torch.load(opt.resume_from, map_location="cpu")
         # handle plain state_dict or dict checkpoint
@@ -122,6 +125,7 @@ def train(opt):
     ep_action_seen = torch.zeros(opt.num_processes, envs.num_actions, dtype=torch.bool)
     ep_coverage_paid = torch.zeros(opt.num_processes, dtype=torch.bool)
     ep_step_counts = torch.zeros(opt.num_processes, dtype=torch.long)  # used if time_source=elapsed_steps
+    ep_prev_x = torch.zeros(opt.num_processes, dtype=torch.float32) # for distance-based time bonus
     # constants for elapsed time approximation (skip=4, ~60 fps)
     ep_time_potential = torch.zeros(opt.num_processes, dtype=torch.float32)
     frameskip = 4
@@ -181,26 +185,44 @@ def train(opt):
             novelty_terms = []
             coverage_terms = []
             time_terms = []
+            NOOP_ID = 0 
             for idx, a in enumerate(act_ids):
                 # Novelty bonus
-                c = int(ep_action_counts[idx, a].item())
-                if opt.novelty_cap > 0 and c >= opt.novelty_cap:
+                if a == NOOP_ID:
+                    # No novelty for NOOP
                     nov = 0.0
                 else:
-                    if opt.novelty_mode == 'geometric':
-                        nov = opt.novelty_weight * (opt.novelty_alpha ** c)
+                    c = int(ep_action_counts[idx, a].item())
+                    if opt.novelty_cap > 0 and c >= opt.novelty_cap:
+                        nov = 0.0
                     else:
-                        nov = opt.novelty_weight / (1.0 + c)
+                        if opt.novelty_mode == 'geometric':
+                            nov = opt.novelty_weight * (opt.novelty_alpha ** c)
+                        else:
+                            nov = opt.novelty_weight / (1.0 + c)
+                    ep_action_counts[idx, a] += 1
+                    ep_action_seen[idx, a] = True
                 novelty_terms.append(float(nov))
 
-                # Mark usage and maybe coverage bonus
-                ep_action_counts[idx, a] += 1
-                ep_action_seen[idx, a] = True
-                if (not ep_coverage_paid[idx]) and bool(ep_action_seen[idx].all().item()):
-                    coverage_terms.append(float(opt.coverage_bonus))
-                    ep_coverage_paid[idx] = True
-                else:
-                    coverage_terms.append(0.0)
+                # # Mark usage and maybe coverage bonus
+                # ep_action_counts[idx, a] += 1
+                # ep_action_seen[idx, a] = True
+                # if (not ep_coverage_paid[idx]) and bool(ep_action_seen[idx].all().item()):
+                #     coverage_terms.append(float(opt.coverage_bonus))
+                #     ep_coverage_paid[idx] = True
+                # else:
+                #     coverage_terms.append(0.0)
+                # Coverage bonus (ignore NOOP in the “all used” check)
+                coverage_bonus_step = 0.0
+                if not ep_coverage_paid[idx]:
+                    seen_useful = ep_action_seen[idx].clone()
+                    # Mark NOOP as already satisfied so it never blocks coverage
+                    if seen_useful.numel() > NOOP_ID:
+                        seen_useful[NOOP_ID] = True
+                    if bool(seen_useful.all().item()):
+                        coverage_bonus_step = float(opt.coverage_bonus)
+                        ep_coverage_paid[idx] = True
+                coverage_terms.append(coverage_bonus_step)
 
                 # Time proximity bonus as stepwise potential difference (instant reward)
                 if opt.time_source == 'env_remaining':
@@ -230,6 +252,23 @@ def train(opt):
                 device=reward.device, dtype=reward.dtype
             )
             reward = reward + extras
+            # Idle penalty based on lack of horizontal progress (discourages standing still)
+            for idx, d in enumerate(done_flags):
+                x_raw = info[idx].get('x_pos', 0)
+                try:
+                    x_now = float(getattr(x_raw, "item", lambda: x_raw)())
+                except Exception:
+                    x_now = 0.0
+
+                if noop_penalty > 0 and not d:
+                    delta_x = x_now - ep_prev_x[idx].item()
+                    # penalize only near-zero forward progress; no penalty if delta_x < 0 (going back)
+                    idle_eps = 0.1
+                    if (reward[idx].item() <= 0.0) and (0.0 <= delta_x < idle_eps):
+                        reward[idx] -= noop_penalty
+
+                # Update tracker, and reset on episode end
+                ep_prev_x[idx] = 0.0 if d else x_now
 
             # Reset per-episode trackers for envs that just ended
             for idx, d in enumerate(done_flags):

@@ -24,7 +24,8 @@ def get_args():
     parser.add_argument("--action_type", type=str, default="simple")
     parser.add_argument("--saved_path", type=str, default="trained_models")
     parser.add_argument("--output_path", type=str, default="None", help="Defaults to output/YYYY-MM-DD")
-    parser.add_argument("--max_seconds", type=float, default=10, help="Stop test after this many seconds")
+    parser.add_argument("--max_seconds", type=float, default=5, help="Stop test after this many seconds")
+    parser.add_argument("--temperature", type=float, default=25.0, help="Action sampling temperature at test time; 0 means argmax.")
     args = parser.parse_args()
 
     if not args.output_path or args.output_path == "None":
@@ -62,12 +63,16 @@ def test(opt):
     model.eval()
     state = torch.from_numpy(env.reset())
     start = time.time()
+    T = opt.temperature
     while True:
         if torch.cuda.is_available():
             state = state.cuda()
         logits, value = model(state)
-        policy = F.softmax(logits, dim=1)
-        action = torch.argmax(policy).item()
+        # policy = F.softmax(logits, dim=1)
+        policy = F.softmax(logits / T, dim=1)
+        action = torch.distributions.Categorical(policy).sample().item()
+
+        # action = torch.argmax(policy).item()
         state, reward, done, info = env.step(action)
         state = torch.from_numpy(state)
         # env.render()

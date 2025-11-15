@@ -18,8 +18,11 @@ import json
 class Monitor:
     def __init__(self, width, height, saved_path):
 
-        self.command = ["ffmpeg", "-y", "-f", "rawvideo", "-vcodec", "rawvideo", "-s", "{}X{}".format(width, height),
-                        "-pix_fmt", "rgb24", "-r", "60", "-i", "-", "-an", "-vcodec", "mpeg4", saved_path]
+        # self.command = ["ffmpeg", "-y", "-f", "rawvideo", "-vcodec", "rawvideo", "-s", "{}X{}".format(width, height),
+        #                 "-pix_fmt", "rgb24", "-r", "30", "-i", "-", "scale=800:600",   "-an", "-vcodec", "mpeg4", saved_path]
+        self.command = ["ffmpeg", "-y", "-f", "rawvideo", "-vcodec", "rawvideo", "-s",
+                         "{}X{}".format(width, height), "-pix_fmt", "rgb24", "-r", "30", "-i", "-",
+                           "-vf", "scale=800:600", "-an", "-vcodec", "mpeg4", saved_path]
         try:
             self.pipe = sp.Popen(self.command, stdin=sp.PIPE, stderr=sp.PIPE)
         except FileNotFoundError:
