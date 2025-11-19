@@ -1,10 +1,12 @@
+user powershell
+
 rebuild: docker build -t mario-ppo .
 
 run docker: docker run --gpus all -it --rm -v "${PWD}:/Super-mario-bros-PPO-pytorch" mario-ppo
 
 train: Inside: python train.py --world 1 --stage 1 --lr 1e-4
 test: python test.py --world 1 --stage 1
-
+python record_play.py
 
 python -c "import gym, numpy; print('gym', gym.__version__)"
 

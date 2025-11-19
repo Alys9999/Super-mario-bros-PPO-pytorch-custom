@@ -38,6 +38,13 @@ class Recorder:
         self._sentinel = object()
         self._lock = threading.Lock()
 
+    def _mask_hud(self, frame):
+        hud_h = 32
+        color = (104, 136, 252)
+        out = frame.copy()
+        out[:hud_h, :, :] = np.array(color, dtype=frame.dtype)
+        return out
+
     def start_recording(self, meta: Dict[str, Any]) -> None:
         timestamp = datetime.now().strftime("recording_%Y%m%d_%H%M%S")
         base_dir = os.path.join(self.recordings_root, timestamp)
@@ -172,7 +179,7 @@ class Recorder:
 
             frame, out_path, step_info = item
             try:
-                frame_to_save = self._process_frame_quality(frame)
+                frame_to_save = self._process_frame_quality(self._mask_hud(frame))
                 frame_bgr = cv2.cvtColor(frame_to_save, cv2.COLOR_RGB2BGR)
                 success = cv2.imwrite(out_path, frame_bgr)
                 if success:
