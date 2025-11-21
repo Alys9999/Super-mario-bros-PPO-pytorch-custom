@@ -137,23 +137,21 @@ def record_run(
 
             next_state, reward, done, info = env.step(action)
 
-            frame = None
-            try:
-                frame = env.render(mode="rgb_array")
-            except Exception:
-                frame = None
+            # Collect high-FPS substep frames from the env (if available)
+            frames_to_save = env.drain_recent_rgb_frames()
 
-            action_buttons = actions[action] if 0 <= action < len(actions) else []
+            action_buttons = actions[action]
 
-            recorder.record_step(
-                frame=frame,
-                action_idx=action,
-                action_buttons=action_buttons,
-                reward=float(reward),
-                done=bool(done),
-                info=info,
-                timestep=timestep,
-            )
+            for frame in frames_to_save:
+                recorder.record_step(
+                    frame=frame,
+                    action_idx=action,
+                    action_buttons=action_buttons,
+                    reward=float(reward),
+                    done=bool(done),
+                    info=info,
+                    timestep=timestep,
+                )
 
             timestep += 1
             state = next_state

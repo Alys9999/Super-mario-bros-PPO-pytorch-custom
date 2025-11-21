@@ -86,16 +86,31 @@ class CustomSkipFrame(Wrapper):
         self.observation_space = Box(low=0, high=255, shape=(skip, 84, 84))
         self.skip = skip
         self.states = np.zeros((skip, 84, 84), dtype=np.float32)
+        # Buffer to expose raw RGB frames captured at each emulator step
+        # inside the skip loop. This lets recorders write ~60 FPS while
+        # evaluation still uses frame skip.
+        self.recent_rgb_frames = []
 
     def step(self, action):
         total_reward = 0
         last_states = []
+        # Collect per-substep renders to enable high-FPS recording
+        self.recent_rgb_frames = []
         for i in range(self.skip):
             state, reward, done, info = self.env.step(action)
             total_reward += reward
+            # Try to capture the raw RGB frame at this emulator step
+            rgb = self.env.render(mode="rgb_array")
+            if rgb is not None:
+                # Important: copy the frame now because some backends reuse
+                # the same numpy buffer for subsequent renders. Without a
+                # copy, all buffered frames would reference the same data
+                # and appear identical when saved.
+                self.recent_rgb_frames.append(np.array(rgb).copy())
             if i >= self.skip / 2:
                 last_states.append(state)
             if done:
+                # Preserve collected frames; reset internal buffers
                 self.reset()
                 return self.states[None, :, :, :].astype(np.float32), total_reward, done, info
         max_state = np.max(np.concatenate(last_states, 0), 0)
@@ -107,6 +122,15 @@ class CustomSkipFrame(Wrapper):
         state = self.env.reset()
         self.states = np.concatenate([state for _ in range(self.skip)], 0)
         return self.states[None, :, :, :].astype(np.float32)
+
+    def drain_recent_rgb_frames(self):
+        """
+        Return and clear the list of raw RGB frames collected during the last
+        call to step(). Enables external recording at the emulator's native rate.
+        """
+        frames = self.recent_rgb_frames
+        self.recent_rgb_frames = []
+        return frames
 
 
 def create_train_env(world, stage, actions, output_path=None):
