@@ -87,6 +87,7 @@ def record_run(
     recordings_root: str = "recordings",
     frame_skip: int = 1,
     quality: str = "high",
+    temperature: float = 0.0,
 ) -> None:
     action_type = getattr(opt, "action_type", "custom")
     actions = _get_actions(action_type)
@@ -118,6 +119,7 @@ def record_run(
                 "buttons_order_ext": ["action", "jump", "left", "right", "down"],
                 "user_name": "Zy",
                 "naming_format": "user_fxxx_axxx_ntxxx.png",
+                "temperature": float(getattr(opt, "temperature", temperature)),
             }
         )
 
@@ -132,8 +134,13 @@ def record_run(
 
             with torch.no_grad():
                 logits, _ = model(state_tensor)
-                policy = F.softmax(logits, dim=1)
-                action = torch.argmax(policy, dim=1).item()
+                T = float(getattr(opt, "temperature", temperature) or 0.0)
+                if T > 0:
+                    policy = F.softmax(logits / T, dim=1)
+                    action = torch.distributions.Categorical(policy).sample().item()
+                else:
+                    policy = F.softmax(logits, dim=1)
+                    action = torch.argmax(policy, dim=1).item()
 
             next_state, reward, done, info = env.step(action)
 

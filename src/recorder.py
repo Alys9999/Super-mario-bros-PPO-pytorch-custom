@@ -152,6 +152,7 @@ class Recorder:
                 "game_version": game_version,
                 "user_name": user_name,
                 "naming_format": naming_format,
+                "temperature": float(self.meta.get("temperature", 0.0)),
             },
             "frame_data": self.steps,
         }

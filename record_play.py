@@ -14,7 +14,7 @@ def get_args():
         choices=["custom", "simple", "right", "complex"],
     )
     parser.add_argument("--model-path", type=str, default="trained_models/ppo_super_mario_bros_1_1")
-    parser.add_argument("--num-episodes", type=int, default=1)
+    parser.add_argument("--num-episodes", type=int, default=10)
     parser.add_argument("--recordings-root", type=str, default="recordings")
     parser.add_argument("--frame-skip", type=int, default=1)
     parser.add_argument(
@@ -22,6 +22,12 @@ def get_args():
         type=str,
         default="high",
         choices=["low", "medium", "high"],
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=25.0,
+        help="Action sampling temperature; 0 for greedy argmax",
     )
     return parser.parse_args()
 
@@ -35,4 +41,5 @@ if __name__ == "__main__":
         recordings_root=opt.recordings_root,
         frame_skip=opt.frame_skip,
         quality=opt.quality,
+        temperature=opt.temperature,
     )
