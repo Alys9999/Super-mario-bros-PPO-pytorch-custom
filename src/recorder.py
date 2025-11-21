@@ -96,6 +96,9 @@ class Recorder:
         ext_names = self._map_to_external_names(list(action_buttons))
         action_binary = self._action_binary_external(ext_names)
 
+        # Detect death (terminal without flag_get)
+        death = bool(done) and not bool(info and info.get("flag_get", False))
+
         step_info: Dict[str, Any] = {
             "frame_id": frame_id,
             "timestamp": float(timestamp),
@@ -103,14 +106,15 @@ class Recorder:
             "action_binary": action_binary,
             "action_names": ext_names if ext_names else ["NONE"],
             "mario_state": "standing",
-            "mario_dead": False,
+            "mario_dead": bool(death),
             "frame_saved": bool(should_save),
             "frame_filename": None,
         }
 
         if should_save and frame is not None and self.frames_dir:
             user = self.meta.get("user_name", "Zy")
-            filename = f"{user}_f{frame_id}_a{action_idx}_nt{self.frame_skip}.png"
+            nt_val = 0 if death else int(self.frame_skip)
+            filename = f"{user}_f{frame_id}_a{action_idx}_nt{nt_val}.png"
             out_path = os.path.join(self.frames_dir, filename)
             try:
                 self.queue.put((frame.copy(), out_path, step_info), timeout=0.01)

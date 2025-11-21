@@ -14,7 +14,7 @@ def get_args():
         choices=["custom", "simple", "right", "complex"],
     )
     parser.add_argument("--model-path", type=str, default="trained_models/ppo_super_mario_bros_1_1")
-    parser.add_argument("--num-episodes", type=int, default=10)
+    parser.add_argument("--num-episodes", type=int, default=2)
     parser.add_argument("--recordings-root", type=str, default="recordings")
     parser.add_argument("--frame-skip", type=int, default=1)
     parser.add_argument(
@@ -34,12 +34,13 @@ def get_args():
 
 if __name__ == "__main__":
     opt = get_args()
-    record_run(
-        opt=opt,
-        model_path=opt.model_path,
-        num_episodes=opt.num_episodes,
-        recordings_root=opt.recordings_root,
-        frame_skip=opt.frame_skip,
-        quality=opt.quality,
-        temperature=opt.temperature,
-    )
+    for i in range(2):
+        record_run(
+            opt=opt,
+            model_path=opt.model_path,
+            num_episodes=opt.num_episodes,
+            recordings_root=opt.recordings_root,
+            frame_skip=opt.frame_skip,
+            quality=opt.quality,
+            temperature=opt.temperature-i,
+        )

@@ -149,13 +149,14 @@ def record_run(
 
             action_buttons = actions[action]
 
-            for frame in frames_to_save:
+            for idx, frame in enumerate(frames_to_save):
+                is_last = bool(done) and (idx == len(frames_to_save) - 1)
                 recorder.record_step(
                     frame=frame,
                     action_idx=action,
                     action_buttons=action_buttons,
                     reward=float(reward),
-                    done=bool(done),
+                    done=is_last,
                     info=info,
                     timestep=timestep,
                 )
