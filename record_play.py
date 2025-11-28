@@ -26,7 +26,7 @@ def get_args():
     parser.add_argument(
         "--temperature",
         type=float,
-        default=25.0,
+        default=30.0,
         help="Action sampling temperature; 0 for greedy argmax",
     )
     return parser.parse_args()
@@ -34,7 +34,7 @@ def get_args():
 
 if __name__ == "__main__":
     opt = get_args()
-    for i in range(2):
+    for i in range(20):
         record_run(
             opt=opt,
             model_path=opt.model_path,
@@ -42,5 +42,5 @@ if __name__ == "__main__":
             recordings_root=opt.recordings_root,
             frame_skip=opt.frame_skip,
             quality=opt.quality,
-            temperature=opt.temperature-i,
+            temperature=opt.temperature,
         )

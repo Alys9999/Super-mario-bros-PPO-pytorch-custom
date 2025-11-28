@@ -1,5 +1,30 @@
 # [PYTORCH] Proximal Policy Optimization (PPO) for playing Super Mario Bros
 
+## RL data collection augmentation (Z. Lu)
+
+To balance rare failure cases for downstream generative modeling, this fork adds a reinforcement-learning data collection pipeline driven by a multi-objective PPO policy. The collector is tuned to (1) cover every composite action in the discrete control space, (2) yield trajectories long enough for stable diffusion training, and (3) inject a small but non-zero number of explicit death states so the model learns the correct visual pattern for terminal events--something the original human dataset almost never showed.
+
+Implementation highlights:
+- Built on the open-source PyTorch PPO implementation for Super Mario Bros. with the `gym_super_mario_bros` environment wrapped in `JoypadSpace`.
+- Control space restricted to eight composite button combos: `NOOP`, `Right`, `Right+A`, `Right+B`, `Right+A+B`, `A`, `Left`, and `Left+A`.
+- At each timestep the recorder saves the rendered frame PNG and its discrete action code, producing paired samples `(x_t, a_t)` (including rare death scenes) for conditioning.
+
+Dataset snapshot:
+- 21 trajectories with 77,760 saved frames; average length ~3.7k frames and median length ~2.8k frames.
+- 42 frames labeled as Mario dead (~0.05% of the RL subset), providing the visual supervision needed to recognize terminal states.
+- Empirical action distribution:
+
+| Action code | Button combination | Fraction of frames |
+| --- | --- | --- |
+| 0 | NOOP | 12.8% |
+| 1 | Right | 12.4% |
+| 2 | Right+A | 13.4% |
+| 3 | Right+B | 13.2% |
+| 4 | Right+A+B | 12.6% |
+| 5 | A | 11.7% |
+| 6 | Left | 12.4% |
+| 7 | Left+A | 11.5% |
+
 ## Introduction
 
 Here is my python source code for training an agent to play super mario bros. By using Proximal Policy Optimization (PPO) algorithm introduced in the paper **Proximal Policy Optimization Algorithms** [paper](https://arxiv.org/abs/1707.06347).
